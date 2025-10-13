@@ -6,7 +6,6 @@
 #include <getopt.h>
 #include <sys/resource.h>
 #include <sys/types.h>
-#include <linux/limits.h>
 
 #define ENV_LENGTH 16
 
