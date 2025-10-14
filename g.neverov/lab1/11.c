@@ -25,17 +25,16 @@ void print_id_proc() {
 
 void print_ulimit() {
     struct rlimit limit;
-    if (getrlimit(RLIMIT_NPROC, &limit) == 0) {
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
         if (limit.rlim_cur == RLIM_INFINITY) {
             printf("unlimited\n");
         } else {
             printf("%llu\n", (unsigned long long)limit.rlim_cur);
         }
     } else {
-        perror("Error getting process limit");
+        perror("Error getting file descriptor limit");
     }
 }
-
 void print_size_corfile() {
     struct rlimit limit;
     if (getrlimit(RLIMIT_CORE, &limit) == 0) {
