@@ -6,9 +6,6 @@
 #include <errno.h>
 #include <limits.h>
 #include <string.h>
-#include <bits/getopt_core.h>
-#include <linux/limits.h>
-
 void print_id_user() {
     printf("Real ID %d\n", getuid());
     printf("Effective ID: %d\n", geteuid());
