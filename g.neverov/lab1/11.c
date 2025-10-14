@@ -24,17 +24,15 @@ void print_id_proc() {
 }
 
 void print_ulimit() {
-    struct rlimit limit;
-    if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
-        if (limit.rlim_cur == RLIM_INFINITY) {
-            printf("unlimited\n");
-        } else {
-            printf("%llu\n", (unsigned long long)limit.rlim_cur);
-        }
+    long max_proc = sysconf(_SC_CHILD_MAX);
+    if (max_proc != -1) {
+        printf("%ld\n", max_proc);
     } else {
-        perror("Error getting file descriptor limit");
+        perror("Error getting process limit");
     }
 }
+
+
 void print_size_corfile() {
     struct rlimit limit;
     if (getrlimit(RLIMIT_CORE, &limit) == 0) {
@@ -103,11 +101,14 @@ void set_new_ulimit(const char *str) {
     if (*endptr != '\0') {
         fprintf(stderr, "Invalid ulimit value: %s\n", str);
     } else {
-        long new_ulimit = ulimit(UL_SETFSIZE, new_val);
-        printf("New limit: %ld\n", new_val);
+        long result = ulimit(UL_SETFSIZE, new_val);
+        if (result != -1) {
+            printf("New process limit: %ld\n", new_val);
+        } else {
+            perror("Error setting process limit");
+        }
     }
 }
-
 int main(int argc, char *argv[]) {
     int c;
     int count = 0;
