@@ -7,6 +7,7 @@
 #include <time.h>
 #include <string.h>
 #include <libgen.h>
+#include <sys/sysmacros.h>
 
 char *get_file_mode(mode_t mode) {
     static char buffer[10];
@@ -43,6 +44,21 @@ int main(int argc, char *argv[]) {
         else if (S_ISDIR(sb.st_mode)) {
             file_type = 'd';
         }
+        else if (S_ISLNK(sb.st_mode)) {
+            file_type = 'l';
+        }
+        else if (S_ISCHR(sb.st_mode)) {
+            file_type = 'c';
+        }
+        else if (S_ISBLK(sb.st_mode)) {
+            file_type = 'b';
+        }
+        else if (S_ISFIFO(sb.st_mode)) {
+            file_type = 'p';
+        }
+        else if (S_ISSOCK(sb.st_mode)) {
+            file_type = 's';
+        }
         else {
             file_type = '?';
         }
@@ -57,12 +73,11 @@ int main(int argc, char *argv[]) {
         snprintf(owner, sizeof(owner), "%s", pw ? pw->pw_name : "?");
         snprintf(group, sizeof(group), "%s", gr ? gr->gr_name : "?");
 
-        char size[16];
-        if (file_type == '-') {
-            snprintf(size, sizeof(size), "%ld", sb.st_size);
-        }
-        else {
-            snprintf(size, sizeof(size), "");
+        char size_info[32];
+        if (S_ISCHR(sb.st_mode) || S_ISBLK(sb.st_mode)) {
+            snprintf(size_info, sizeof(size_info), "%d, %d", major(sb.st_rdev), minor(sb.st_rdev));
+        } else {
+            snprintf(size_info, sizeof(size_info), "%ld", sb.st_size);
         }
 
         char time_buffer[20];
@@ -72,7 +87,7 @@ int main(int argc, char *argv[]) {
         char *filename = basename((char *)argv[i]);
 
         printf("%c%s %3d %-8s %-8s %8s %s %s\n",
-           file_type, get_file_mode(sb.st_mode), link_count, owner, group, size, time_buffer, filename);
+           file_type, get_file_mode(sb.st_mode), link_count, owner, group, size_info, time_buffer, filename);
     }
 
     return 0;
