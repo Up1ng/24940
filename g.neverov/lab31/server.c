@@ -2,148 +2,154 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/select.h>
 #include <sys/un.h>
-#include <sys/time.h>
 #include <ctype.h>
+#include <poll.h>
 #include <time.h>
 
-#define SOCKET_PATH "./socket"
-#define MAX_CLIENTS 10
-#define CHUNK_SIZE 1024
-#define COLLECTION_TIME_SEC 20
+#define SOCKET_PATH  "./socket"
+#define BUF 1024
+#define MAX 5
 
-typedef struct {
-    int fd;
-    char *buffer;
-    size_t size;
-} ClientData;
-
-void append_data(ClientData *client, char *new_data, int len) {
-    client->buffer = realloc(client->buffer, client->size + len + 1);
-    if (!client->buffer) {
-        perror("realloc");
-        exit(1);
-    }
-    memcpy(client->buffer + client->size, new_data, len);
-    client->size += len;
-    client->buffer[client->size] = '\0';
+void get_current_time(char *time_buf, size_t buf_size) {
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(time_buf, buf_size, "%Y-%m-%d %H:%M:%S", tm_info);
 }
 
 int main() {
     int server_fd, client_fd;
-    struct sockaddr_un addr;
-    
-    ClientData clients[MAX_CLIENTS] = {0}; 
-    
-    fd_set master, read_fds;
-    int max_fd;
-    char temp_buffer[CHUNK_SIZE];
-    
-    struct timeval start_time, current_time, timeout;
-    double elapsed_time;
+    struct sockaddr_un socket_addr;
+    char buffer[BUF];
+    ssize_t bytes;
+    int count_ds = 1;
+
+    struct pollfd fds[MAX + 1];
+    char connection_time[MAX + 1][64];
+
+    time_t start_time;
+    time(&start_time);
 
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_fd == -1) { perror("socket"); exit(1); }
+
+    memset(&socket_addr, 0, sizeof(socket_addr));
+    socket_addr.sun_family = AF_UNIX;
+    strncpy(socket_addr.sun_path, SOCKET_PATH, sizeof(socket_addr.sun_path)-1);
 
     unlink(SOCKET_PATH);
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) { perror("bind"); exit(1); }
-    if (listen(server_fd, MAX_CLIENTS) == -1) { perror("listen"); exit(1); }
+    bind(server_fd, (struct sockaddr*)&socket_addr, sizeof(socket_addr));
+    listen(server_fd, 5);
 
-    FD_ZERO(&master);
-    FD_SET(server_fd, &master);
-    max_fd = server_fd;
+    printf("Сервер запущен\n");
 
-    printf("Server started. Collecting messages for %d seconds...\n", COLLECTION_TIME_SEC);
+    memset(fds, 0, sizeof(fds));
+    memset(connection_time, 0, sizeof(connection_time));
 
-    gettimeofday(&start_time, NULL);
+    fds[0].fd = server_fd;
+    fds[0].events = POLLIN;
 
     while (1) {
-        gettimeofday(&current_time, NULL);
-        elapsed_time = (current_time.tv_sec - start_time.tv_sec) + 
-                       (current_time.tv_usec - start_time.tv_usec) / 1000000.0;
+        int ready = poll(fds, count_ds, 100);
 
-        if (elapsed_time >= COLLECTION_TIME_SEC) {
-            break;
-        }
+        for (int i = 0; i < count_ds; i++) {
+            if (fds[i].revents == 0) {
+                continue;
+            }
 
-        double remaining = COLLECTION_TIME_SEC - elapsed_time;
-        timeout.tv_sec = (long)remaining;
-        timeout.tv_usec = (long)((remaining - timeout.tv_sec) * 1000000);
+            if (fds[i].fd == server_fd) {
+                if (fds[i].revents & POLLIN) {
+                    client_fd = accept(server_fd, NULL, NULL);
 
-        read_fds = master;
-        
-        int activity = select(max_fd + 1, &read_fds, NULL, NULL, &timeout);
+                    if (count_ds < MAX + 1) {
+                        fds[count_ds].fd = client_fd;
+                        fds[count_ds].events = POLLIN;
 
-        if (activity == -1) {
-            perror("select");
-            break;
-        }
-        
-        if (activity == 0) {
-            continue; 
-        }
+                        get_current_time(connection_time[count_ds], sizeof(connection_time[count_ds]));
 
-        if (FD_ISSET(server_fd, &read_fds)) {
-            client_fd = accept(server_fd, NULL, NULL);
-            if (client_fd != -1) {
-                int placed = 0;
-                for (int i = 0; i < MAX_CLIENTS; i++) {
-                    if (clients[i].fd == 0) {
-                        clients[i].fd = client_fd;
-                        clients[i].buffer = NULL;
-                        clients[i].size = 0;
-                        FD_SET(client_fd, &master);
-                        if (client_fd > max_fd) max_fd = client_fd;
-                        placed = 1;
-                        break;
+                        char current_time[64];
+                        get_current_time(current_time, sizeof(current_time));
+
+                        printf("[%s] Клиент подключен: id=%d, всего клиентов: %d\n", 
+                               current_time, client_fd, count_ds);
+
+                        count_ds++;
+                    } else {
+                        char current_time[64];
+                        get_current_time(current_time, sizeof(current_time));
+                        printf("[%s] Достигнут лимит подключений, отказ клиенту\n", current_time);
+                        close(client_fd);
                     }
                 }
-                if (!placed) close(client_fd);
+            } 
+            else if (fds[i].revents & POLLIN) {
+                bytes = read(fds[i].fd, buffer, BUF - 1);
+
+                if (bytes > 0) {
+                    buffer[bytes] = '\0';
+
+                    for (int j = 0; j < bytes; j++) {
+                        buffer[j] = toupper(buffer[j]);
+                    }
+
+                    char current_time[64];
+                    get_current_time(current_time, sizeof(current_time));
+
+                    printf("[%s] Сообщение от клиента id=%d : %s\n", current_time, fds[i].fd, buffer);
+                    fflush(stdout);
+                } 
+                else if (bytes == 0) {
+                    char current_time[64];
+                    get_current_time(current_time, sizeof(current_time));
+
+                    time_t connect_time_t, disconnect_time_t;
+                    time(&disconnect_time_t);
+
+                    struct tm tm_connect;
+                    memset(&tm_connect, 0, sizeof(tm_connect));
+                    sscanf(connection_time[i], "%d-%d-%d %d:%d:%d", 
+                           &tm_connect.tm_year, &tm_connect.tm_mon, &tm_connect.tm_mday,
+                           &tm_connect.tm_hour, &tm_connect.tm_min, &tm_connect.tm_sec);
+                    tm_connect.tm_year -= 1900;
+                    tm_connect.tm_mon -= 1;
+                    connect_time_t = mktime(&tm_connect);
+
+                    int connection_duration = (int)difftime(disconnect_time_t, connect_time_t);
+
+                    printf("[%s] Клиент отключился: id=%d, время соединения: %d секунд, подключен был: %s\n", 
+                           current_time, fds[i].fd, connection_duration, connection_time[i]);
+
+                    close(fds[i].fd);
+                    fds[i].fd = -1;
+
+                    memset(connection_time[i], 0, sizeof(connection_time[i]));
+                } 
             }
         }
 
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            int fd = clients[i].fd;
-            if (fd > 0 && FD_ISSET(fd, &read_fds)) {
-                ssize_t r = read(fd, temp_buffer, CHUNK_SIZE);
-                
-                if (r <= 0) {
-                    close(fd);
-                    FD_CLR(fd, &master);
-                    clients[i].fd = -1;
-                } else {
-                    for (int k = 0; k < r; k++) {
-                        temp_buffer[k] = toupper(temp_buffer[k]);
-                    }
-                    append_data(&clients[i], temp_buffer, r);
+        for (int i = 0; i < count_ds; i++) {
+            if (fds[i].fd == -1) {
+                for (int j = i; j < count_ds - 1; j++) {
+                    fds[j] = fds[j + 1];
+                    strncpy(connection_time[j], connection_time[j + 1], sizeof(connection_time[j]));
                 }
+                i--; 
+                count_ds--;
             }
         }
     }
 
-    printf("\n--- Time is up! Processing results ---\n");
-
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i].buffer != NULL && clients[i].size > 0) {
-            printf("Client #%d sent:\n%s\n----------------\n", i + 1, clients[i].buffer);
-            free(clients[i].buffer);
+    for (int i = 0; i < count_ds; i++) {
+        if (fds[i].fd != -1) {
+            close(fds[i].fd);
         }
-        if (clients[i].fd > 0) close(clients[i].fd);
     }
 
-    gettimeofday(&current_time, NULL);
-    double total_time = (current_time.tv_sec - start_time.tv_sec) + 
-                        (current_time.tv_usec - start_time.tv_usec) / 1000000.0;
-    
-    printf("Total program execution time: %.4f seconds\n", total_time);
+    time_t end_time;
+    time(&end_time);
+    printf("Сервер завершил работу, программа работала %ld секунд\n", (long)difftime(end_time, start_time));
+
     unlink(SOCKET_PATH);
-
     return 0;
 }
